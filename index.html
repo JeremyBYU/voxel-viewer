@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<title>Confidence-rich Grid Mapping</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<style>
+	body {
+		color: #ffffff;
+		font-family: Monospace;
+		font-size: 13px;
+		text-align: center;
+		font-weight: bold;
+		background-color: #333333;
+		margin: 0px;
+		overflow: hidden;
+	}
+
+	#info {
+		position: absolute;
+		bottom: 0px;
+		width: 100%;
+		padding: 5px;
+	}
+
+	#fileselect {
+		position: fixed;
+		top: 50%;
+		margin-top: -50px;
+		height: 100px;
+		padding: 35px 15px;
+		background: #666;
+		border-radius: 20px;
+		text-align: center;
+		width: 400px;
+		left: 50%;
+		margin-left: -200px;
+		box-sizing: border-box;
+		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+	}
+
+	a {
+		color: #ffffff;
+	}
+
+	#oldie a {
+		color: #da0;
+	}
+
+	#notSupported {
+		width: 50%;
+		margin: auto;
+		border: 2px red solid;
+		margin-top: 20px;
+		padding: 10px;
+	}
+</style>
+<link rel
+</head>
+<body>
+
+	<div id="container"></div>
+	<div id="info">
+		<p id="fileselect">
+			<label for="fileopener">Open map...</label> <input type="file" id="fileopener" onchange="loadMap()" />
+		</p>
+		<div id="notSupported" style="display:none">Sorry your graphics card + browser does not support hardware instancing</div>
+	</div>
+
+	<script src="js/three.min.js"></script>
+
+	<script src="js/Detector.js"></script>
+	<script src="js/OrbitControls.js"></script>
+	<script src="js/FirstPersonControls.js"></script>
+	<script src="js/stats.min.js"></script>
+	<script src="js/dat.gui.min.js"></script>
+
+	<script id="vertexShader" type="x-shader/x-vertex">
+		precision highp float;
+
+		uniform mat4 modelViewMatrix;
+		uniform mat4 projectionMatrix;
+		uniform mat4 normalMatrix;
+
+		uniform float threshold;
+		uniform float xMin;
+		uniform float xMax;
+		uniform float yMin;
+		uniform float yMax;
+		uniform float zMin;
+		uniform float zMax;
+
+		uniform float lightX;
+		uniform float lightY;
+		uniform float lightZ;
+
+		attribute vec3 position;
+		attribute vec3 offset;
+		attribute vec3 normal;
+		attribute vec2 uv;
+		attribute vec4 orientation;
+
+		attribute float occupancy;
+		attribute float variance;
+		attribute float error;
+
+		uniform bool highlightErrors;
+		uniform float errorThreshold;
+
+		varying vec2 vUv;
+
+		varying vec3 normalInterp;
+		varying vec3 vertPos;
+		varying vec3 lightPos;
+
+		varying float occ;
+		varying float var;
+		varying float err;
+
+		varying float thresh;
+
+		void main() {
+			vec3 vPosition = position;
+			vec3 mPosition = offset + position;
+			// vec3 vcV = cross( orientation.xyz, vPosition );
+			// vPosition = vcV * ( 2.0 * orientation.w ) + ( cross( orientation.xyz, vcV ) * 2.0 + vPosition );
+
+			vUv = uv;
+
+			lightPos = vec3(lightX, lightY, lightZ);
+
+			if (((!highlightErrors || error <= errorThreshold)
+				&& occupancy < threshold)
+				|| offset.x < xMin || offset.x > xMax
+				|| offset.y < zMin || offset.y > zMax
+				|| offset.z < yMin || offset.z >= yMax)
+				gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+			else
+			{
+				gl_Position = projectionMatrix * modelViewMatrix * vec4(mPosition, 1.0 );
+			}			
+
+			vec4 vertPos4 = modelViewMatrix * vec4(mPosition.xzy, 1.0);
+			vertPos = vec3(vertPos4) / vertPos4.w;
+			normalInterp = vec3(normalMatrix * vec4(normal.xzy, 0.0));
+
+			occ = occupancy;
+			var = variance;
+			err = error;
+
+			thresh = threshold;
+		}
+	</script>
+
+	<script id="fragmentShader" type="x-shader/x-fragment">
+		precision highp float;
+
+		uniform sampler2D map;
+
+		varying vec2 vUv;
+
+		varying vec3 normalInterp;
+		varying vec3 vertPos;
+
+		varying float occ;
+		varying float var;
+		varying float err;
+
+		varying float thresh;
+
+		varying vec3 lightPos;
+
+		uniform bool highlightErrors;
+		uniform float errorThreshold;
+		uniform int mode;
+
+		// const vec3 ambientColor = vec3(0.3, 0.0, 0.0);
+		// const vec3 specColor = vec3(1.0, 1.0, 1.0);
+
+		// the following colormap function is from https://github.com/kbinani/glsl-colormap
+		float colormap_red(float x) {
+		    if (x < 0.7) {
+		        return 4.0 * x - 1.5;
+		    } else {
+		        return -4.0 * x + 4.5;
+		    }
+		}
+
+		float colormap_green(float x) {
+		    if (x < 0.5) {
+		        return 4.0 * x - 0.5;
+		    } else {
+		        return -4.0 * x + 3.5;
+		    }
+		}
+
+		float colormap_blue(float x) {
+		    if (x < 0.3) {
+		       return 4.0 * x + 0.5;
+		    } else {
+		       return -4.0 * x + 2.5;
+		    }
+		}
+
+		vec4 jet(float x) {
+		    float r = clamp(colormap_red(x), 0.0, 1.0);
+		    float g = clamp(colormap_green(x), 0.0, 1.0);
+		    float b = clamp(colormap_blue(x), 0.0, 1.0);
+		    return vec4(r, g, b, 1.0);
+		}
+
+		void main() {
+			float alpha = 1.0;
+			vec3 diffuseColor = vec3(1.-occ, 1.-occ, 1.-occ);
+			if (mode == 1)
+				diffuseColor = jet(sqrt(var) * 2.).xyz;
+			else if (mode == 2)
+				diffuseColor = jet(clamp(abs(err) - 2.*sqrt(var), 0.0, 1.0)).xyz;				
+
+			if (highlightErrors && err > errorThreshold)
+				diffuseColor.x += err;
+
+			vec3 ambientColor = diffuseColor * 0.8;
+			vec3 specColor = diffuseColor * 1.2;
+
+			vec3 normal = normalize(normalInterp);
+			vec3 lightDir = normalize(lightPos - vertPos);
+			vec3 reflectDir = reflect(-lightDir, normal);
+			vec3 viewDir = normalize(-vertPos);
+
+			float lambertian = max(dot(lightDir,normal), 0.0);
+			float specular = 0.0;
+
+			if (lambertian > 0.0) {
+				float specAngle = max(dot(reflectDir, viewDir), 0.0);
+				specular = pow(specAngle, 4.0);
+			}
+			gl_FragColor = vec4(ambientColor +
+				lambertian*diffuseColor +
+				specular*specColor, alpha);
+		}
+	</script>
+
+	<script>
+		if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+
+		var container, stats;
+		var camera, scene, renderer, mesh, controls;
+		var offsetAttribute, occupancyAttribute;
+
+		var lastTime = 0;
+
+		var MIN_OCCUPANCY = 0.1;
+
+		var occupancies = [];
+		var variances = [];
+		var errors = [];
+		var offsets = [];
+
+		var voxelSize;
+		var xMin;
+		var xMax;
+		var yMin;
+		var yMax;
+		var zMin;
+		var zMax;
+
+		var mapVersion;
+		var mapType;
+		var mapTypes = ["Unknown", "CRM", "Log-Odds", "GroundTruth"];	
+
+		var lightX = 10.;
+		var lightY = 10.;
+		var lightZ = 10.;
+
+		function loadMap() {
+			var reader  = new FileReader();
+			reader.addEventListener("load", function (e) {
+				arrayBuffer = reader.result;
+				var view = new DataView(arrayBuffer);
+				var ptr = 0;
+				mapVersion = view.getUint32(ptr, true);
+				ptr += 4;
+				mapType = view.getUint32(ptr, true);
+				if (mapType > mapTypes.length)
+					mapType = 0;
+				ptr += 4;
+				var readParticles = view.getUint32(ptr, true);
+				ptr += 4;
+
+				voxelSize = view.getFloat64(ptr, true);
+				ptr += 8;
+				xMin = view.getFloat64(ptr, true);
+				ptr += 8;
+				xMax = view.getFloat64(ptr, true);
+				ptr += 8;
+				yMin = view.getFloat64(ptr, true);
+				ptr += 8;
+				yMax = view.getFloat64(ptr, true);
+				ptr += 8;
+				zMin = view.getFloat64(ptr, true);
+				ptr += 8;
+				zMax = view.getFloat64(ptr, true);
+				ptr += 8;
+				var numParticles = view.getUint32(56, true);
+				ptr += 4;
+				console.log(
+					"voxelSize", voxelSize,
+					"  | xMin", xMin,
+					"  | xMax", xMax,
+					"  | yMin", yMin,
+					"  | yMax", yMax,
+					"  | zMin", zMin,
+					"  | zMax", zMax,
+					"  | numParticles", numParticles);
+				var voxelsX = Math.floor((xMax-xMin)/voxelSize);
+				var voxelsY = Math.floor((yMax-yMin)/voxelSize);
+				var voxelsZ = Math.floor((zMax-zMin)/voxelSize);
+				for (var x = 0; x < voxelsX; ++x)
+				{
+					for (var y = 0; y < voxelsY; ++y)
+					{
+						for (var z = 0; z < voxelsZ; ++z)
+						{
+							var occupancy = view.getFloat64(ptr, true);
+							ptr += 8;
+
+							if (mapType == 3 && occupancy > MIN_OCCUPANCY)
+								occupancies.push(occupancy * 0.5);
+							else if (mapType != 3)
+							{
+								// maps other than ground truth map
+								var variance = view.getFloat64(ptr, true);
+								ptr += 8;
+								if (readParticles == 1)
+									ptr += 8 * numParticles
+								var error = view.getFloat64(ptr, true);
+								ptr += 8;
+
+
+								if (occupancy > MIN_OCCUPANCY)
+								{
+									occupancies.push(occupancy);
+									variances.push(variance);
+									errors.push(error);
+								}
+							}
+							if (occupancy > MIN_OCCUPANCY)
+								offsets.push(xMin + x*voxelSize, zMin + z*voxelSize, yMin + y*voxelSize);						
+						}
+					}
+				}
+
+				document.getElementById("info").innerHTML = '<p>'
+					+ fileopener.files[0].name + ' - '
+					+ String(voxelsX) + "x"
+					+ String(voxelsZ) + "x"
+					+ String(voxelsY) + " "
+					+ mapTypes[mapType] + " map ("
+					+ String(voxelsX*voxelsY*voxelsZ)
+					+ " voxels, v"
+					+ String(mapVersion) + ")</p>";
+				// setTimeout(function() {
+				// 	var element = document.getElementById("info");
+				// 	element.outerHTML = "";
+				// 	delete element;
+				// }, 8000);
+
+				init();
+				animate();
+
+			}, false);
+			reader.readAsArrayBuffer(document.getElementById("fileopener").files[0]);
+		}
+
+		var clock;
+		function init() {
+			var gui = new dat.GUI({
+				height : 5 * 32 - 1,
+				width: 300
+			});
+
+			clock = new THREE.Clock();
+
+			container = document.getElementById( 'container' );
+
+			camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 0.001, 1000 );
+			camera.position.z = 20;
+
+			scene = new THREE.Scene();
+			scene.background = new THREE.Color( 0x888888 );
+
+			// geometry
+			console.log('occupancies', occupancies.length);
+
+			var instances = 1000000;
+
+			var bufferGeometry = new THREE.BoxBufferGeometry( voxelSize, voxelSize, voxelSize );
+
+			// copying data from a simple box geometry, but you can specify a custom geometry if you want
+
+			var geometry = new THREE.InstancedBufferGeometry();
+			geometry.index = bufferGeometry.index;
+			geometry.attributes.position = bufferGeometry.attributes.position;
+			geometry.attributes.uv = bufferGeometry.attributes.uv;
+			geometry.attributes.normal = bufferGeometry.attributes.normal;
+
+			// per instance data
+
+			// var orientations = [];
+
+			var vector = new THREE.Vector4();
+			var x, y, z, w;
+
+			offsetAttribute = new THREE.InstancedBufferAttribute( new Float32Array( offsets ), 3 );
+			// orientationAttribute = new THREE.InstancedBufferAttribute( new Float32Array( orientations ), 4 ).setDynamic( true );
+			occupancyAttribute = new THREE.InstancedBufferAttribute( new Float32Array( occupancies ), 1 );
+			varianceAttribute = new THREE.InstancedBufferAttribute( new Float32Array( variances ), 1 );
+			errorAttribute = new THREE.InstancedBufferAttribute( new Float32Array( errors ), 1 );
+
+			geometry.addAttribute( 'offset', offsetAttribute );
+			// geometry.addAttribute( 'orientation', orientationAttribute );
+			geometry.addAttribute( 'occupancy', occupancyAttribute );
+			geometry.addAttribute( 'variance', varianceAttribute );
+			geometry.addAttribute( 'error', errorAttribute );
+
+			// var material = new THREE.MeshLambertMaterial({color: 0xff0000 }); //, transparent: true, opacity: 0.5});
+
+			var material = new THREE.RawShaderMaterial( {
+
+				uniforms: {
+					threshold: { value: 0.5 },
+					xMin: { value: xMin },
+					xMax: { value: xMax },
+					yMin: { value: yMin },
+					yMax: { value: yMax },
+					zMin: { value: zMin },
+					zMax: { value: zMax },
+					lightX: { value: lightX },
+					lightY: { value: lightY },
+					lightZ: { value: lightZ },
+					mode: { value: 0 },
+					highlightErrors: { value: true },
+					errorThreshold: { value: 0.3 }
+				},
+				vertexShader: document.getElementById( 'vertexShader' ).textContent,
+				fragmentShader: document.getElementById( 'fragmentShader' ).textContent
+
+			} );
+
+			mesh = new THREE.Mesh( geometry, material );
+
+
+			var params = {
+				threshold: 0.5,
+				showAxes: true,
+				showBoundingBox: true,
+				xMin: xMin,
+				xMax: xMax,
+				yMin: yMin,
+				yMax: yMax,
+				zMin: zMin,
+				zMax: zMax,
+				lightX: lightX,
+				lightY: lightY,
+				lightZ: lightZ,
+				screenshot: function() {
+					renderer.render(scene, camera);
+					var imgData = renderer.domElement.toDataURL();
+					// var imgNode = document.createElement("img");
+					// imgNode.src = imgData;
+					var element = document.createElement("a");
+					element.setAttribute('href', imgData); // 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+					element.setAttribute('download', 'screenshot.png');
+
+					element.style.display = 'none';
+					document.body.appendChild(element);
+
+					element.click();
+				},
+				backgroundColor: "#888888",
+				mode: "occupancy",
+				highlightErrors: true,
+				errorThreshold: 0.3
+			};
+			gui.add(params, 'threshold').min(MIN_OCCUPANCY).max(1.0).step(0.01).onChange( function( threshold  )
+			{
+				mesh.material.uniforms.threshold.value = threshold;
+			});
+			gui.add(params, 'mode', { "occupancy": 0, "variance": 1, "inconsistency": 2 }).onChange( function( mode )
+			{
+				mesh.material.uniforms.mode.value = mode;
+			});
+			gui.add(params, 'highlightErrors').onChange( function( highlightErrors )
+			{
+				mesh.material.uniforms.highlightErrors.value = highlightErrors;
+			});
+			gui.add(params, 'errorThreshold').min(0.0).max(1.0).step(0.01).onChange( function( errorThreshold  )
+			{
+				mesh.material.uniforms.errorThreshold.value = errorThreshold;
+			});
+			var slicing = gui.addFolder("Slicing");
+			slicing.add(params, 'xMin').min(xMin).max(xMax).step(0.01).onChange( function( v )
+			{
+				mesh.material.uniforms.xMin.value = v;
+			});
+			slicing.add(params, 'xMax').min(xMin).max(xMax).step(0.01).onChange( function( v )
+			{
+				mesh.material.uniforms.xMax.value = v;
+			});
+			slicing.add(params, 'yMin').min(yMin).max(yMax).step(0.01).onChange( function( v )
+			{
+				mesh.material.uniforms.yMin.value = v;
+			});
+			slicing.add(params, 'yMax').min(yMin).max(yMax).step(0.01).onChange( function( v )
+			{
+				mesh.material.uniforms.yMax.value = v;
+			});
+			slicing.add(params, 'zMin').min(zMin).max(zMax).step(0.01).onChange( function( v )
+			{
+				mesh.material.uniforms.zMin.value = v;
+			});
+			slicing.add(params, 'zMax').min(zMin).max(zMax).step(0.01).onChange( function( v )
+			{
+				mesh.material.uniforms.zMax.value = v;
+			});
+
+			gui.add(params, 'screenshot');
+			var rendering = gui.addFolder("Rendering");
+			rendering.addColor(params, 'backgroundColor').onChange( function( v )
+			{
+				scene.background = new THREE.Color(v);
+			});
+
+			rendering.add(params, 'lightX').min(-10.).max(10.).step(0.01).onChange( function( v )
+			{
+				mesh.material.uniforms.lightX.value = v;
+			});
+			rendering.add(params, 'lightY').min(-10.).max(10.).step(0.01).onChange( function( v )
+			{
+				mesh.material.uniforms.lightY.value = v;
+			});
+			rendering.add(params, 'lightZ').min(-10.).max(10.).step(0.01).onChange( function( v )
+			{
+				mesh.material.uniforms.lightZ.value = v;
+			});
+
+			var cube = new THREE.LineSegments( 
+				new THREE.EdgesGeometry(new THREE.CubeGeometry( xMax-xMin, zMax-zMin, yMax-yMin )), 
+				new THREE.LineBasicMaterial( {
+					color: 0xff8010
+				} )
+				);
+			cube.translateX((xMax+xMin)/2.-voxelSize/2.);
+			cube.translateZ((yMax+yMin)/2.-voxelSize/2.);
+			cube.translateY((zMax+zMin)/2.-voxelSize/2.);
+			camera.lookAt((xMax+xMin)/2., (yMax+yMin)/2., (zMax+zMin)/2.)
+
+			scene.add(cube);
+			rendering.add(params, 'showBoundingBox').onChange( function( showBoundingBox  )
+			{
+				cube.visible = showBoundingBox;
+			});
+
+			scene.add( mesh );
+
+			var axesHelper = new THREE.AxesHelper( 5 );
+			axesHelper.rotation.x = -Math.PI/2.;
+			axesHelper.scale.y = -1;
+
+			scene.add(axesHelper);
+
+			rendering.add(params, 'showAxes').onChange( function( showAxes  )
+			{
+				axesHelper.visible = showAxes;
+			});
+
+			gui.remember(params);
+
+			renderer = new THREE.WebGLRenderer({ antialias: true });
+			renderer.setPixelRatio( window.devicePixelRatio );
+			renderer.setSize( window.innerWidth, window.innerHeight );
+			controls = new THREE.OrbitControls( camera, renderer.domElement );
+			// controls.lookSpeed = 0.04;
+	  //       controls.movementSpeed = 1;
+	  //       controls.noFly = true;
+	  //       controls.lookVertical = true;
+	  //       controls.constrainVertical = true;
+	  //       controls.verticalMin = 1.0;
+	  //       controls.verticalMax = 2.0;
+	  //       controls.lon = 250;
+	  //       controls.lat = 120;
+	  //       controls.activeLook = false;
+
+	  container.appendChild( renderer.domElement );
+
+	  if ( renderer.extensions.get( 'ANGLE_instanced_arrays' ) === false ) {
+
+	  	document.getElementById( 'notSupported' ).style.display = '';
+	  	return;
+
+	  }
+
+	  stats = new Stats();
+	  container.appendChild( stats.dom );
+
+	  window.addEventListener( 'resize', onWindowResize, false );
+
+	}
+
+	function onWindowResize( event ) {
+
+		camera.aspect = window.innerWidth / window.innerHeight;
+		camera.updateProjectionMatrix();
+
+		renderer.setSize( window.innerWidth, window.innerHeight );
+
+	}
+
+	function animate() {
+		var delta = clock.getDelta();
+		controls.update(delta);
+
+		requestAnimationFrame( animate );
+
+		render();
+		stats.update();
+
+	}
+
+	function render() {
+		var time = performance.now();
+
+		lastTime = time;
+
+		renderer.render( scene, camera );
+	}
+
+	function screenshot() {
+		renderer.render(scene, camera);
+		var imgData = renderer.domElement.toDataURL();
+		// var imgNode = document.createElement("img");
+		// imgNode.src = imgData;
+		element.setAttribute('href', imgData); // 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+		element.setAttribute('download', filename);
+
+		element.style.display = 'none';
+		document.body.appendChild(element);
+
+		element.click();
+	}
+</script>
+</body>
+</html>
