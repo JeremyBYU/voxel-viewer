@@ -233,6 +233,141 @@
 				specular*specColor, alpha);
 		}
 	</script>
+	<script id="vertexShader_building" type="x-shader/x-vertex">
+		precision highp float;
+
+		uniform mat4 modelViewMatrix;
+		uniform mat4 projectionMatrix;
+		uniform mat4 normalMatrix;
+
+		uniform float threshold;
+		uniform float xMin;
+		uniform float xMax;
+		uniform float yMin;
+		uniform float yMax;
+		uniform float zMin;
+		uniform float zMax;
+
+		uniform float lightX;
+		uniform float lightY;
+		uniform float lightZ;
+
+		attribute vec3 position;
+		attribute vec3 offset;
+		attribute vec3 normal;
+		attribute vec2 uv;
+
+
+		attribute float occupancy;
+
+
+		varying vec2 vUv;
+
+		varying vec3 normalInterp;
+		varying vec3 vertPos;
+		varying vec3 lightPos;
+
+		varying float occ;
+
+		void main() {
+			vec3 vPosition = position;
+			vec3 mPosition = offset + position;
+
+			vUv = uv;
+
+			lightPos = vec3(lightX, lightY, lightZ);
+
+
+			if (offset.x < xMin || offset.x > xMax
+				|| offset.y < zMin || offset.y > zMax
+				|| offset.z < yMin || offset.z >= yMax)
+				gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+			else
+			{
+				gl_Position = projectionMatrix * modelViewMatrix * vec4(mPosition, 1.0 );
+			}
+		
+
+			vec4 vertPos4 = modelViewMatrix * vec4(mPosition.xzy, 1.0);
+			vertPos = vec3(vertPos4) / vertPos4.w;
+			normalInterp = vec3(normalMatrix * vec4(normal.xzy, 0.0));
+
+			occ = occupancy;
+
+		}
+	</script>
+
+	<script id="fragmentShader_building" type="x-shader/x-fragment">
+		precision highp float;
+
+		uniform sampler2D map;
+
+		varying vec2 vUv;
+
+		varying vec3 normalInterp;
+		varying vec3 vertPos;
+
+		varying float occ;
+
+
+		varying vec3 lightPos;
+
+
+		// the following colormap function is from https://github.com/kbinani/glsl-colormap
+		float colormap_red(float x) {
+		    if (x < 0.7) {
+		        return 4.0 * x - 1.5;
+		    } else {
+		        return -4.0 * x + 4.5;
+		    }
+		}
+
+		float colormap_green(float x) {
+		    if (x < 0.5) {
+		        return 4.0 * x - 0.5;
+		    } else {
+		        return -4.0 * x + 3.5;
+		    }
+		}
+
+		float colormap_blue(float x) {
+		    if (x < 0.3) {
+		       return 4.0 * x + 0.5;
+		    } else {
+		       return -4.0 * x + 2.5;
+		    }
+		}
+
+		vec4 jet(float x) {
+		    float r = clamp(colormap_red(x), 0.0, 1.0);
+		    float g = clamp(colormap_green(x), 0.0, 1.0);
+		    float b = clamp(colormap_blue(x), 0.0, 1.0);
+		    return vec4(r, g, b, 1.0);
+		}
+
+		void main() {
+			float alpha = 1.0;
+			vec3 diffuseColor = vec3(1.0, 0.0, 0.0);
+			vec3 ambientColor = diffuseColor * 0.8;
+			vec3 specColor = diffuseColor * 1.2;
+
+			vec3 normal = normalize(normalInterp);
+			vec3 lightDir = normalize(lightPos - vertPos);
+			vec3 reflectDir = reflect(-lightDir, normal);
+			vec3 viewDir = normalize(-vertPos);
+
+			float lambertian = max(dot(lightDir,normal), 0.0);
+			float specular = 0.0;
+
+			if (lambertian > 0.0) {
+				float specAngle = max(dot(reflectDir, viewDir), 0.0);
+				specular = pow(specAngle, 4.0);
+			}
+			gl_FragColor = vec4(ambientColor +
+				lambertian*diffuseColor +
+				specular*specColor, alpha);
+		}
+	</script>
 
 	<script src="js/bundle.js"></script>
 </body>

@@ -1,4 +1,5 @@
 // const {loadNumpy} = require('./util.js')
+//@ts-check
 const NumpyParser = require("numpy-parser");
 const NDArray = require("ndarray");
 
@@ -8,25 +9,29 @@ const voxelSize = 1
 if (!Detector.webgl) Detector.addGetWebGLMessage();
 
 var container, stats;
-var camera, scene, renderer, mesh, controls;
+var camera, scene, renderer, terrain_mesh, controls;
 var offsetAttribute, occupancyAttribute;
 
 var lastTime = 0;
 
-const MIN_OCCUPANCY = 1;
+const MIN_OCCUPANCY = 254;
+const TERRAIN_OCCUPANCY = 255;
+const BUIDLING_OCCUPANCY = 254;
 
-const occupancies = [];
+const terrain_occupancies = [];
+const terrain_offsets = [];
+const building_occupanceis = [];
+const building_offsets = [];
 const variances = [];
 const errors = [];
-const offsets = [];
 
-// var voxelSize;
-// var xMin;
-// var xMax;
-// var yMin;
-// var yMax;
-// var zMin;
-// var zMax;
+
+let xMin;
+let xMax;
+let yMin;
+let yMax;
+let zMin;
+let zMax;
 
 // var mapVersion;
 // var mapType;
@@ -40,23 +45,11 @@ function loadMap() {
   var reader = new FileReader();
   reader.addEventListener(
     "load",
-    function(e) {
+    function (e) {
       arrayBuffer = reader.result;
       const data = NumpyParser.fromArrayBuffer(arrayBuffer);
       const map = NDArray(data.data, data.shape);
 
-
-      // var view = new DataView(arrayBuffer);
-      // var ptr = 0;
-      // mapVersion = view.getUint32(ptr, true);
-      // ptr += 4;
-      // mapType = view.getUint32(ptr, true);
-      // if (mapType > mapTypes.length) mapType = 0;
-      // ptr += 4;
-      // var readParticles = view.getUint32(ptr, true);
-      // ptr += 4;
-
-      // voxelSize = view.getFloat64(ptr, true);
       xMin = 0
       xMax = map.shape[0]
       yMin = 0
@@ -85,18 +78,23 @@ function loadMap() {
       for (let x = 0; x < voxelsX; ++x) {
         for (let y = 0; y < voxelsY; ++y) {
           for (let z = 0; z < voxelsZ; ++z) {
-            let occupancy = map.get(x,y,z)
-            if(x > 100 || y > 100)
-              continue;
-            if ( occupancy > MIN_OCCUPANCY) {
-              occupancies.push(occupancy/255);
-              offsets.push(
+            let occupancy = map.get(x, y, z)
+            // if(x > 400 || y > 400)
+            //   continue;
+            if (occupancy === TERRAIN_OCCUPANCY) {
+              terrain_occupancies.push(occupancy / 255);
+              terrain_offsets.push(
                 xMin + x * voxelSize,
                 zMin + z * voxelSize,
                 yMin + y * voxelSize
-              );
-              // if (occupancies.length > 10000)
-              //   break;
+              )
+            } else if(occupancy === BUIDLING_OCCUPANCY) {
+              building_occupanceis.push(occupancy / 255);
+              building_offsets.push(
+                xMin + x * voxelSize,
+                zMin + z * voxelSize,
+                yMin + y * voxelSize
+              )
             }
           }
         }
@@ -131,120 +129,6 @@ function loadMap() {
 }
 
 
-function loadMap_old() {
-  var reader = new FileReader();
-  reader.addEventListener(
-    "load",
-    function(e) {
-      arrayBuffer = reader.result;
-      var view = new DataView(arrayBuffer);
-      var ptr = 0;
-      mapVersion = view.getUint32(ptr, true);
-      ptr += 4;
-      mapType = view.getUint32(ptr, true);
-      if (mapType > mapTypes.length) mapType = 0;
-      ptr += 4;
-      var readParticles = view.getUint32(ptr, true);
-      ptr += 4;
-
-      voxelSize = view.getFloat64(ptr, true);
-      ptr += 8;
-      xMin = view.getFloat64(ptr, true);
-      ptr += 8;
-      xMax = view.getFloat64(ptr, true);
-      ptr += 8;
-      yMin = view.getFloat64(ptr, true);
-      ptr += 8;
-      yMax = view.getFloat64(ptr, true);
-      ptr += 8;
-      zMin = view.getFloat64(ptr, true);
-      ptr += 8;
-      zMax = view.getFloat64(ptr, true);
-      ptr += 8;
-      var numParticles = view.getUint32(56, true);
-      ptr += 4;
-      console.log(
-        "voxelSize",
-        voxelSize,
-        "  | xMin",
-        xMin,
-        "  | xMax",
-        xMax,
-        "  | yMin",
-        yMin,
-        "  | yMax",
-        yMax,
-        "  | zMin",
-        zMin,
-        "  | zMax",
-        zMax,
-        "  | numParticles",
-        numParticles
-      );
-      var voxelsX = Math.floor((xMax - xMin) / voxelSize);
-      var voxelsY = Math.floor((yMax - yMin) / voxelSize);
-      var voxelsZ = Math.floor((zMax - zMin) / voxelSize);
-      for (var x = 0; x < voxelsX; ++x) {
-        for (var y = 0; y < voxelsY; ++y) {
-          for (var z = 0; z < voxelsZ; ++z) {
-            var occupancy = view.getFloat64(ptr, true);
-            ptr += 8;
-
-            if (mapType == 3 && occupancy > MIN_OCCUPANCY)
-              occupancies.push(occupancy * 0.5);
-            else if (mapType != 3) {
-              // maps other than ground truth map
-              var variance = view.getFloat64(ptr, true);
-              ptr += 8;
-              if (readParticles == 1) ptr += 8 * numParticles;
-              var error = view.getFloat64(ptr, true);
-              ptr += 8;
-
-              if (occupancy > MIN_OCCUPANCY) {
-                occupancies.push(occupancy);
-                variances.push(variance);
-                errors.push(error);
-              }
-            }
-            if (occupancy > MIN_OCCUPANCY)
-              offsets.push(
-                xMin + x * voxelSize,
-                zMin + z * voxelSize,
-                yMin + y * voxelSize
-              );
-          }
-        }
-      }
-
-      document.getElementById("info").innerHTML =
-        "<p>" +
-        fileopener.files[0].name +
-        " - " +
-        String(voxelsX) +
-        "x" +
-        String(voxelsZ) +
-        "x" +
-        String(voxelsY) +
-        " " +
-        mapTypes[mapType] +
-        " map (" +
-        String(voxelsX * voxelsY * voxelsZ) +
-        " voxels, v" +
-        String(mapVersion) +
-        ")</p>";
-      // setTimeout(function() {
-      // 	var element = document.getElementById("info");
-      // 	element.outerHTML = "";
-      // 	delete element;
-      // }, 8000);
-
-      init();
-      animate();
-    },
-    false
-  );
-  reader.readAsArrayBuffer(document.getElementById("fileopener").files[0]);
-}
 
 window.loadMap = loadMap
 
@@ -262,8 +146,8 @@ function init() {
   camera = new THREE.PerspectiveCamera(
     50,
     window.innerWidth / window.innerHeight,
-    0.001,
-    1000
+    0.1,
+    10000
   );
   camera.position.z = 20;
 
@@ -271,7 +155,7 @@ function init() {
   scene.background = new THREE.Color(0x888888);
 
   // geometry
-  console.log("occupancies", occupancies.length);
+  console.log("occupancies", terrain_occupancies.length);
 
   var instances = 10000000;
 
@@ -283,77 +167,51 @@ function init() {
 
   // copying data from a simple box geometry, but you can specify a custom geometry if you want
 
-  var geometry = new THREE.InstancedBufferGeometry();
-  geometry.index = bufferGeometry.index;
-  geometry.attributes.position = bufferGeometry.attributes.position;
-  geometry.attributes.uv = bufferGeometry.attributes.uv;
-  geometry.attributes.normal = bufferGeometry.attributes.normal;
+  var terrain_geometry = new THREE.InstancedBufferGeometry();
+  terrain_geometry.index = bufferGeometry.index;
+  terrain_geometry.attributes.position = bufferGeometry.attributes.position;
+  terrain_geometry.attributes.uv = bufferGeometry.attributes.uv;
+  terrain_geometry.attributes.normal = bufferGeometry.attributes.normal;
+
+  let building_geometry = new THREE.InstancedBufferGeometry();
+  building_geometry.index = bufferGeometry.index;
+  building_geometry.attributes.position = bufferGeometry.attributes.position;
+  building_geometry.attributes.uv = bufferGeometry.attributes.uv;
+  building_geometry.attributes.normal = bufferGeometry.attributes.normal;
 
   // per instance data
 
   // var orientations = [];
 
-  var vector = new THREE.Vector4();
   var x, y, z, w;
 
   offsetAttribute = new THREE.InstancedBufferAttribute(
-    new Float32Array(offsets),
+    new Float32Array(terrain_offsets),
     3
   );
   // orientationAttribute = new THREE.InstancedBufferAttribute( new Float32Array( orientations ), 4 ).setDynamic( true );
   occupancyAttribute = new THREE.InstancedBufferAttribute(
-    new Float32Array(occupancies),
-    1
-  );
-  varianceAttribute = new THREE.InstancedBufferAttribute(
-    new Float32Array(variances),
-    1
-  );
-  errorAttribute = new THREE.InstancedBufferAttribute(
-    new Float32Array(errors),
+    new Float32Array(terrain_occupancies),
     1
   );
 
-  geometry.addAttribute("offset", offsetAttribute);
-  // geometry.addAttribute( 'orientation', orientationAttribute );
-  // geometry.addAttribute("occupancy", occupancyAttribute);
-  // geometry.addAttribute("variance", varianceAttribute);
-  // geometry.addAttribute("error", errorAttribute);
+  let offsetAttribute_building = new THREE.InstancedBufferAttribute(
+    new Float32Array(building_offsets),
+    3
+  );
+  // varianceAttribute = new THREE.InstancedBufferAttribute(
+  //   new Float32Array(variances),
+  //   1
+  // );
+  // errorAttribute = new THREE.InstancedBufferAttribute(
+  //   new Float32Array(errors),
+  //   1
+  // );
 
-  // var material = new THREE.MeshLambertMaterial({color: 0xff0000 }); //, transparent: true, opacity: 0.5});
-  let vertexShader = [
-    "precision highp float;",
-    "",
-    "uniform mat4 modelViewMatrix;",
-    "uniform mat4 projectionMatrix;",
-    "",
-    "attribute vec3 position;",
-    "attribute vec3 offset;",
-    "",
-    "void main() {",
-    "",
-    "	gl_Position = projectionMatrix * modelViewMatrix * vec4( offset + position, 1.0 );",
-    "",
-    "}"
-  ].join("\n");
-  let fragmentShader = [
-    "precision highp float;",
-    "",
-    "void main() {",
-    "",
-    "	gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);",
-    "",
-    "}"
-  ].join("\n");
-  // var material = new THREE.MeshBasicMaterial({color: 0x7777ff});
-  var material = new THREE.RawShaderMaterial({
-    uniforms: {},
-    vertexShader: vertexShader,
-    fragmentShader: fragmentShader,
-    side: THREE.DoubleSide,
-    transparent: false
-  });
-  var material = new THREE.RawShaderMaterial({
+  terrain_geometry.addAttribute("offset", offsetAttribute);
+  building_geometry.addAttribute("offset", offsetAttribute_building);
+
+  var terrain_material = new THREE.RawShaderMaterial({
     uniforms: {
       threshold: { value: 0.5 },
       xMin: { value: xMin },
@@ -373,7 +231,26 @@ function init() {
     fragmentShader: document.getElementById("fragmentShader").textContent
   });
 
-  mesh = new THREE.Mesh(geometry, material);
+  var building_material = new THREE.RawShaderMaterial({
+    uniforms: {
+      xMin: { value: xMin },
+      xMax: { value: xMax },
+      yMin: { value: yMin },
+      yMax: { value: yMax },
+      zMin: { value: zMin },
+      zMax: { value: zMax },
+      lightX: { value: lightX },
+      lightY: { value: lightY },
+      lightZ: { value: lightZ },
+    },
+    vertexShader: document.getElementById("vertexShader_building").textContent,
+    fragmentShader: document.getElementById("fragmentShader_building").textContent
+  });
+
+  
+
+  terrain_mesh = new THREE.Mesh(terrain_geometry, terrain_material);
+  let building_mesh = new THREE.Mesh(building_geometry, building_material);
 
   var params = {
     threshold: 0.5,
@@ -388,7 +265,7 @@ function init() {
     lightX: lightX,
     lightY: lightY,
     lightZ: lightZ,
-    screenshot: function() {
+    screenshot: function () {
       renderer.render(scene, camera);
       var imgData = renderer.domElement.toDataURL();
       // var imgNode = document.createElement("img");
@@ -403,33 +280,22 @@ function init() {
       element.click();
     },
     backgroundColor: "#888888",
-    mode: "occupancy",
-    highlightErrors: true,
-    errorThreshold: 0.3
   };
   gui
-    .add(params, "threshold")
-    .min(MIN_OCCUPANCY)
-    .max(1.0)
-    .step(0.01)
-    .onChange(function(threshold) {
-      mesh.material.uniforms.threshold.value = threshold;
-    });
-  gui
     .add(params, "mode", { occupancy: 0, variance: 1, inconsistency: 2 })
-    .onChange(function(mode) {
-      mesh.material.uniforms.mode.value = mode;
+    .onChange(function (mode) {
+      terrain_mesh.material.uniforms.mode.value = mode;
     });
-  gui.add(params, "highlightErrors").onChange(function(highlightErrors) {
-    mesh.material.uniforms.highlightErrors.value = highlightErrors;
+  gui.add(params, "highlightErrors").onChange(function (highlightErrors) {
+    terrain_mesh.material.uniforms.highlightErrors.value = highlightErrors;
   });
   gui
     .add(params, "errorThreshold")
     .min(0.0)
     .max(1.0)
     .step(0.01)
-    .onChange(function(errorThreshold) {
-      mesh.material.uniforms.errorThreshold.value = errorThreshold;
+    .onChange(function (errorThreshold) {
+      terrain_mesh.material.uniforms.errorThreshold.value = errorThreshold;
     });
   var slicing = gui.addFolder("Slicing");
   slicing
@@ -437,53 +303,53 @@ function init() {
     .min(xMin)
     .max(xMax)
     .step(0.01)
-    .onChange(function(v) {
-      mesh.material.uniforms.xMin.value = v;
+    .onChange(function (v) {
+      terrain_mesh.material.uniforms.xMin.value = v;
     });
   slicing
     .add(params, "xMax")
     .min(xMin)
     .max(xMax)
     .step(0.01)
-    .onChange(function(v) {
-      mesh.material.uniforms.xMax.value = v;
+    .onChange(function (v) {
+      terrain_mesh.material.uniforms.xMax.value = v;
     });
   slicing
     .add(params, "yMin")
     .min(yMin)
     .max(yMax)
     .step(0.01)
-    .onChange(function(v) {
-      mesh.material.uniforms.yMin.value = v;
+    .onChange(function (v) {
+      terrain_mesh.material.uniforms.yMin.value = v;
     });
   slicing
     .add(params, "yMax")
     .min(yMin)
     .max(yMax)
     .step(0.01)
-    .onChange(function(v) {
-      mesh.material.uniforms.yMax.value = v;
+    .onChange(function (v) {
+      terrain_mesh.material.uniforms.yMax.value = v;
     });
   slicing
     .add(params, "zMin")
     .min(zMin)
     .max(zMax)
     .step(0.01)
-    .onChange(function(v) {
-      mesh.material.uniforms.zMin.value = v;
+    .onChange(function (v) {
+      terrain_mesh.material.uniforms.zMin.value = v;
     });
   slicing
     .add(params, "zMax")
     .min(zMin)
     .max(zMax)
     .step(0.01)
-    .onChange(function(v) {
-      mesh.material.uniforms.zMax.value = v;
+    .onChange(function (v) {
+      terrain_mesh.material.uniforms.zMax.value = v;
     });
 
   gui.add(params, "screenshot");
   var rendering = gui.addFolder("Rendering");
-  rendering.addColor(params, "backgroundColor").onChange(function(v) {
+  rendering.addColor(params, "backgroundColor").onChange(function (v) {
     scene.background = new THREE.Color(v);
   });
 
@@ -492,24 +358,24 @@ function init() {
     .min(-10)
     .max(10)
     .step(0.01)
-    .onChange(function(v) {
-      mesh.material.uniforms.lightX.value = v;
+    .onChange(function (v) {
+      terrain_mesh.material.uniforms.lightX.value = v;
     });
   rendering
     .add(params, "lightY")
     .min(-10)
     .max(10)
     .step(0.01)
-    .onChange(function(v) {
-      mesh.material.uniforms.lightY.value = v;
+    .onChange(function (v) {
+      terrain_mesh.material.uniforms.lightY.value = v;
     });
   rendering
     .add(params, "lightZ")
     .min(-10)
     .max(10)
     .step(0.01)
-    .onChange(function(v) {
-      mesh.material.uniforms.lightZ.value = v;
+    .onChange(function (v) {
+      terrain_mesh.material.uniforms.lightZ.value = v;
     });
 
   var cube = new THREE.LineSegments(
@@ -526,11 +392,12 @@ function init() {
   camera.lookAt((xMax + xMin) / 2, (yMax + yMin) / 2, (zMax + zMin) / 2);
 
   scene.add(cube);
-  rendering.add(params, "showBoundingBox").onChange(function(showBoundingBox) {
+  rendering.add(params, "showBoundingBox").onChange(function (showBoundingBox) {
     cube.visible = showBoundingBox;
   });
 
-  scene.add(mesh);
+  scene.add(terrain_mesh);
+  scene.add(building_mesh);
 
   var axesHelper = new THREE.AxesHelper(5);
   axesHelper.rotation.x = -Math.PI / 2;
@@ -538,7 +405,7 @@ function init() {
 
   scene.add(axesHelper);
 
-  rendering.add(params, "showAxes").onChange(function(showAxes) {
+  rendering.add(params, "showAxes").onChange(function (showAxes) {
     axesHelper.visible = showAxes;
   });
 
