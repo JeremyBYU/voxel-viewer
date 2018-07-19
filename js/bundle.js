@@ -707,8 +707,10 @@ function init() {
   terrain_mesh = new THREE.Mesh(terrain_geometry, terrain_material);
   let building_mesh = new THREE.Mesh(building_geometry, building_material);
 
+  terrain_mesh.frustumCulled = false;
+  building_mesh.frustumCulled = false;
+
   var params = {
-    threshold: 0.5,
     showAxes: true,
     showBoundingBox: true,
     xMin: xMin,
@@ -735,34 +737,8 @@ function init() {
       element.click();
     },
     backgroundColor: "#888888",
-    mode: "occupancy",
-    highlightErrors: true,
-    errorThreshold: 0.3
   };
-  gui
-    .add(params, "threshold")
-    .min(MIN_OCCUPANCY)
-    .max(1.0)
-    .step(0.01)
-    .onChange(function (threshold) {
-      terrain_mesh.material.uniforms.threshold.value = threshold;
-    });
-  gui
-    .add(params, "mode", { occupancy: 0, variance: 1, inconsistency: 2 })
-    .onChange(function (mode) {
-      terrain_mesh.material.uniforms.mode.value = mode;
-    });
-  gui.add(params, "highlightErrors").onChange(function (highlightErrors) {
-    terrain_mesh.material.uniforms.highlightErrors.value = highlightErrors;
-  });
-  gui
-    .add(params, "errorThreshold")
-    .min(0.0)
-    .max(1.0)
-    .step(0.01)
-    .onChange(function (errorThreshold) {
-      terrain_mesh.material.uniforms.errorThreshold.value = errorThreshold;
-    });
+
   var slicing = gui.addFolder("Slicing");
   slicing
     .add(params, "xMin")
@@ -813,12 +789,12 @@ function init() {
       terrain_mesh.material.uniforms.zMax.value = v;
     });
 
+    var rendering = gui.addFolder("Rendering");
+    rendering.addColor(params, "backgroundColor").onChange(function (v) {
+      scene.background = new THREE.Color(v);
+    });
+    
   gui.add(params, "screenshot");
-  var rendering = gui.addFolder("Rendering");
-  rendering.addColor(params, "backgroundColor").onChange(function (v) {
-    scene.background = new THREE.Color(v);
-  });
-
   rendering
     .add(params, "lightX")
     .min(-10)
